@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- SEO Meta Tags -->
+    <title>AI Text Humanizer - Free Online Tool</title>
+    <meta name="description"
+        content="Transform AI-generated content into natural, human-like text for free. No signup required. Instant results." />
+    <meta name="keywords" content="AI text humanizer, AI detector bypass, humanize AI text, free tool" />
+    <meta name="author" content="Your Name" />
+
+    <!-- Open Graph Tags -->
+    <meta property="og:title" content="AI Text Humanizer - Free Online Tool" />
+    <meta property="og:description" content="Transform AI-generated content into natural, human-like text for free" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="/" />
+
+    <!-- Twitter Card Tags -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="AI Text Humanizer - Free Online Tool" />
+    <meta name="twitter:description" content="Transform AI-generated content into natural, human-like text for free" />
+
+    <!-- Robots -->
+    <meta name="robots" content="index, follow" />
+
+    <!-- Canonical URL -->
+    <link rel="canonical" href="/" />
+    <script>
+        const trackUsage = (action, data) => {
+            // Send to your analytics service
+            if (typeof gtag !== 'undefined') {
+                gtag('event', action, {
+                    event_category: 'text_humanizer',
+                    event_label: data.textLength || 0,
+                    value: 1
+                });
+            }
+        };
+    </script>
+</head>
+
+<body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+</body>
+
+</html>
