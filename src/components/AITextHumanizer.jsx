@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { Copy, RefreshCw, FileText, CheckCircle, Zap, Users, Shield } from 'lucide-react';
+import { Copy, RefreshCw, FileText, CheckCircle, Zap, Users, Shield, Settings } from 'lucide-react';
 
 const AITextHumanizer = () => {
     const [inputText, setInputText] = useState('');
@@ -7,6 +7,56 @@ const AITextHumanizer = () => {
     const [isProcessing, setIsProcessing] = useState(false);
     const [copySuccess, setCopySuccess] = useState(false);
     const [processingStep, setProcessingStep] = useState('');
+    const [humanizationMode, setHumanizationMode] = useState('balanced');
+    const [showAdvanced, setShowAdvanced] = useState(false);
+    const [textAnalysis, setTextAnalysis] = useState(null);
+
+    // Batch processing states - FIXED: Added missing setBatchResults
+    const [batchMode, setBatchMode] = useState(false);
+    const [batchTexts, setBatchTexts] = useState(['']);
+    const [batchResults, setBatchResults] = useState([]); // ADDED: Missing state
+
+    // Rate limiter - Simple implementation
+    const [requestCount, setRequestCount] = useState(0);
+    const [lastRequestTime, setLastRequestTime] = useState(0);
+    
+    const checkRateLimit = () => {
+        const now = Date.now();
+        if (now - lastRequestTime > 60000) { // Reset every minute
+            setRequestCount(0);
+            setLastRequestTime(now);
+        }
+        if (requestCount >= 10) {
+            return false;
+        }
+        setRequestCount(prev => prev + 1);
+        return true;
+    };
+
+    // Humanization modes
+    const humanizationModes = {
+        conservative: { 
+            name: 'Conservative',
+            intensity: 0.3, 
+            casualness: 0.2, 
+            variety: 0.4,
+            description: 'Minimal changes, preserves formality'
+        },
+        balanced: { 
+            name: 'Balanced',
+            intensity: 0.6, 
+            casualness: 0.5, 
+            variety: 0.7,
+            description: 'Good balance of natural and professional'
+        },
+        aggressive: { 
+            name: 'Aggressive',
+            intensity: 0.9, 
+            casualness: 0.8, 
+            variety: 0.9,
+            description: 'Maximum humanization, very casual'
+        }
+    };
 
     // AI-specific patterns that make text sound robotic
     const aiPatterns = [
@@ -45,53 +95,91 @@ const AITextHumanizer = () => {
         { pattern: /It can be observed that/gi, replacements: ['You can see that', 'Notice that', 'It\'s clear that', 'Obviously'], category: 'observation' },
     ];
 
-    const [humanizationMode, setHumanizationMode] = useState('balanced');
-
-    const humanizationModes = {
-        conservative: { intensity: 0.3, casualness: 0.2, variety: 0.4 },
-        balanced: { intensity: 0.6, casualness: 0.5, variety: 0.7 },
-        aggressive: { intensity: 0.9, casualness: 0.8, variety: 0.9 }
+    // Context detection
+    const detectContext = (text) => {
+        const academicWords = ['research', 'study', 'analysis', 'methodology', 'findings'];
+        const casualWords = ['yeah', 'awesome', 'cool', 'hey', 'basically'];
+        const businessWords = ['revenue', 'ROI', 'synergy', 'optimize', 'leverage'];
+        
+        const words = text.toLowerCase().split(/\s+/);
+        
+        let academicScore = 0;
+        let casualScore = 0;
+        let businessScore = 0;
+        
+        words.forEach(word => {
+            if (academicWords.includes(word)) academicScore++;
+            if (casualWords.includes(word)) casualScore++;
+            if (businessWords.includes(word)) businessScore++;
+        });
+        
+        const maxScore = Math.max(academicScore, casualScore, businessScore);
+        
+        if (academicScore === maxScore) return 'academic';
+        if (casualScore === maxScore) return 'casual';
+        if (businessScore === maxScore) return 'business';
+        
+        return 'general';
     };
 
-    const [batchMode, setBatchMode] = useState(false);
-const [batchTexts, setBatchTexts] = useState(['']);
+    // Text analysis functions
+    const calculatePerplexity = (text) => {
+        const words = text.toLowerCase().split(/\s+/);
+        const wordFreq = {};
+        
+        words.forEach(word => {
+            wordFreq[word] = (wordFreq[word] || 0) + 1;
+        });
+        
+        const totalWords = words.length;
+        let entropy = 0;
+        
+        Object.values(wordFreq).forEach(freq => {
+            const probability = freq / totalWords;
+            entropy -= probability * Math.log2(probability);
+        });
+        
+        return Math.pow(2, entropy);
+    };
 
-const handleBatchProcess = async () => {
-  const results = [];
-  for (let i = 0; i < batchTexts.length; i++) {
-    if (batchTexts[i].trim()) {
-      const result = await humanizeText(batchTexts[i]);
-      results.push(result);
-    }
-  }
-  setBatchResults(results);
-};
-
+    const calculateBurstiness = (text) => {
+        const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 0);
+        const lengths = sentences.map(s => s.trim().split(/\s+/).length);
+        
+        if (lengths.length < 2) return 0;
+        
+        const mean = lengths.reduce((a, b) => a + b, 0) / lengths.length;
+        const variance = lengths.reduce((acc, len) => acc + Math.pow(len - mean, 2), 0) / lengths.length;
+        const stdDev = Math.sqrt(variance);
+        
+        return stdDev / mean;
+    };
 
     // Function to add sentence variety and natural flow
-    const varysentences = (text) => {
+    const varysentences = (text, mode) => {
         const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 0);
+        const modeSettings = humanizationModes[mode];
 
         return sentences.map((sentence, index) => {
             sentence = sentence.trim();
             if (!sentence) return sentence;
 
-            // Occasionally combine short sentences
-            if (Math.random() < 0.2 && sentence.length < 50 && index < sentences.length - 1) {
+            // Occasionally combine short sentences based on mode
+            if (Math.random() < (modeSettings.variety * 0.3) && sentence.length < 50 && index < sentences.length - 1) {
                 const conjunctions = [' and ', ' but ', ' so ', ' yet ', ' plus '];
                 const randomConj = conjunctions[Math.floor(Math.random() * conjunctions.length)];
                 return sentence + randomConj + sentences[index + 1].trim().toLowerCase();
             }
 
-            // Add variety to sentence starters
-            if (Math.random() < 0.15 && index > 0) {
+            // Add variety to sentence starters based on casualness
+            if (Math.random() < (modeSettings.casualness * 0.3) && index > 0) {
                 const starters = ['Actually, ', 'You know, ', 'Honestly, ', 'Frankly, ', 'Really, ', 'Look, '];
                 const randomStarter = starters[Math.floor(Math.random() * starters.length)];
                 return randomStarter + sentence.charAt(0).toLowerCase() + sentence.slice(1);
             }
 
-            // Occasionally add emphasis
-            if (Math.random() < 0.1) {
+            // Occasionally add emphasis based on casualness
+            if (Math.random() < (modeSettings.casualness * 0.15)) {
                 const emphasis = [' (which is pretty cool)', ' (if you ask me)', ' (obviously)', ' (clearly)'];
                 const randomEmphasis = emphasis[Math.floor(Math.random() * emphasis.length)];
                 return sentence + randomEmphasis;
@@ -102,7 +190,7 @@ const handleBatchProcess = async () => {
     };
 
     // Function to add contractions for natural speech
-    const addContractions = (text) => {
+    const addContractions = (text, mode) => {
         const contractions = [
             { pattern: /\bdo not\b/gi, replacement: "don't" },
             { pattern: /\bdoes not\b/gi, replacement: "doesn't" },
@@ -129,9 +217,11 @@ const handleBatchProcess = async () => {
             { pattern: /\bwhere is\b/gi, replacement: "where's" },
         ];
 
+        const modeSettings = humanizationModes[mode];
         let result = text;
+        
         contractions.forEach(({ pattern, replacement }) => {
-            if (Math.random() < 0.75) { // 75% chance to apply contraction
+            if (Math.random() < (modeSettings.casualness * 0.9 + 0.1)) {
                 result = result.replace(pattern, replacement);
             }
         });
@@ -140,14 +230,15 @@ const handleBatchProcess = async () => {
     };
 
     // Function to add casual expressions and filler words
-    const addCasualExpressions = (text) => {
+    const addCasualExpressions = (text, mode) => {
         const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 0);
+        const modeSettings = humanizationModes[mode];
 
         return sentences.map(sentence => {
             sentence = sentence.trim();
 
-            // Add casual expressions at the beginning
-            if (Math.random() < 0.2) {
+            // Add casual expressions at the beginning based on casualness
+            if (Math.random() < (modeSettings.casualness * 0.4)) {
                 const expressions = [
                     'you know, ',
                     'I mean, ',
@@ -161,7 +252,7 @@ const handleBatchProcess = async () => {
             }
 
             // Add casual modifiers
-            if (Math.random() < 0.15) {
+            if (Math.random() < (modeSettings.casualness * 0.25)) {
                 sentence = sentence.replace(/\bvery\b/gi, () => {
                     const replacements = ['pretty', 'really', 'quite', 'super'];
                     return replacements[Math.floor(Math.random() * replacements.length)];
@@ -173,7 +264,7 @@ const handleBatchProcess = async () => {
     };
 
     // Function to fix passive voice
-    const reducePassiveVoice = (text) => {
+    const reducePassiveVoice = (text, mode) => {
         const passivePatterns = [
             { pattern: /is being (\w+ed)/gi, replacement: (match, verb) => `gets ${verb}` },
             { pattern: /was (\w+ed) by/gi, replacement: (match, verb) => `got ${verb} by` },
@@ -182,9 +273,11 @@ const handleBatchProcess = async () => {
             { pattern: /are (\w+ed) by/gi, replacement: (match, verb) => `get ${verb} by` },
         ];
 
+        const modeSettings = humanizationModes[mode];
         let result = text;
+        
         passivePatterns.forEach(({ pattern, replacement }) => {
-            if (Math.random() < 0.6) { // 60% chance to modify passive voice
+            if (Math.random() < (modeSettings.intensity * 0.8)) {
                 result = result.replace(pattern, replacement);
             }
         });
@@ -196,67 +289,126 @@ const handleBatchProcess = async () => {
     const humanizeText = useCallback(async (text) => {
         if (!text.trim()) return '';
 
+        // Check rate limit
+        if (!checkRateLimit()) {
+            alert('Rate limit exceeded. Please wait a minute before trying again.');
+            return text;
+        }
+
         setIsProcessing(true);
         let humanizedText = text;
+        const mode = humanizationMode;
 
-        // Step 1: Replace AI-specific patterns
-        setProcessingStep('Replacing AI patterns...');
-        await new Promise(resolve => setTimeout(resolve, 300));
+        try {
+            // Step 0: Detect context
+            setProcessingStep('Analyzing content context...');
+            await new Promise(resolve => setTimeout(resolve, 200));
+            const context = detectContext(text);
 
-        aiPatterns.forEach(({ pattern, replacements }) => {
-            humanizedText = humanizedText.replace(pattern, () => {
-                return replacements[Math.floor(Math.random() * replacements.length)];
+            // Step 1: Replace AI-specific patterns
+            setProcessingStep('Replacing AI patterns...');
+            await new Promise(resolve => setTimeout(resolve, 300));
+
+            const modeSettings = humanizationModes[mode];
+            aiPatterns.forEach(({ pattern, replacements }) => {
+                if (Math.random() < modeSettings.intensity) {
+                    humanizedText = humanizedText.replace(pattern, () => {
+                        return replacements[Math.floor(Math.random() * replacements.length)];
+                    });
+                }
             });
-        });
 
-        // Step 2: Add contractions
-        setProcessingStep('Adding natural contractions...');
-        await new Promise(resolve => setTimeout(resolve, 300));
-        humanizedText = addContractions(humanizedText);
+            // Step 2: Add contractions
+            setProcessingStep('Adding natural contractions...');
+            await new Promise(resolve => setTimeout(resolve, 300));
+            humanizedText = addContractions(humanizedText, mode);
 
-        // Step 3: Reduce passive voice
-        setProcessingStep('Improving sentence structure...');
-        await new Promise(resolve => setTimeout(resolve, 300));
-        humanizedText = reducePassiveVoice(humanizedText);
+            // Step 3: Reduce passive voice
+            setProcessingStep('Improving sentence structure...');
+            await new Promise(resolve => setTimeout(resolve, 300));
+            humanizedText = reducePassiveVoice(humanizedText, mode);
 
-        // Step 4: Vary sentence structure
-        setProcessingStep('Adding variety...');
-        await new Promise(resolve => setTimeout(resolve, 300));
-        humanizedText = varysentences(humanizedText);
+            // Step 4: Vary sentence structure
+            setProcessingStep('Adding variety...');
+            await new Promise(resolve => setTimeout(resolve, 300));
+            humanizedText = varysentences(humanizedText, mode);
 
-        // Step 5: Add casual expressions
-        setProcessingStep('Making it more conversational...');
-        await new Promise(resolve => setTimeout(resolve, 300));
-        humanizedText = addCasualExpressions(humanizedText);
+            // Step 5: Add casual expressions
+            setProcessingStep('Making it more conversational...');
+            await new Promise(resolve => setTimeout(resolve, 300));
+            humanizedText = addCasualExpressions(humanizedText, mode);
 
-        // Step 6: Final cleanup
-        setProcessingStep('Final polish...');
-        await new Promise(resolve => setTimeout(resolve, 200));
+            // Step 6: Final cleanup
+            setProcessingStep('Final polish...');
+            await new Promise(resolve => setTimeout(resolve, 200));
 
-        humanizedText = humanizedText
-            .replace(/\s+/g, ' ') // Remove extra spaces
-            .replace(/\.\s*\./g, '.') // Fix double periods
-            .replace(/([.!?])\s*([a-z])/g, (match, punct, letter) => punct + ' ' + letter.toUpperCase()) // Capitalize after punctuation
-            .replace(/\s+([,.!?])/g, '$1') // Fix spacing before punctuation
-            .trim();
+            humanizedText = humanizedText
+                .replace(/\s+/g, ' ') // Remove extra spaces
+                .replace(/\.\s*\./g, '.') // Fix double periods
+                .replace(/([.!?])\s*([a-z])/g, (match, punct, letter) => punct + ' ' + letter.toUpperCase()) // Capitalize after punctuation
+                .replace(/\s+([,.!?])/g, '$1') // Fix spacing before punctuation
+                .trim();
+
+            // Calculate text analysis
+            const analysis = {
+                perplexity: calculatePerplexity(humanizedText),
+                burstiness: calculateBurstiness(humanizedText),
+                context: context
+            };
+            setTextAnalysis(analysis);
+
+        } catch (error) {
+            console.error('Error during humanization:', error);
+            alert('An error occurred during processing. Please try again.');
+            return text;
+        }
 
         setProcessingStep('');
         setIsProcessing(false);
         return humanizedText;
-    }, []);
+    }, [humanizationMode]);
 
-    const handleHumanize = async () => {
-        if (!inputText.trim()) {
-            alert('Please enter some text to humanize');
+    // Batch processing function
+    const handleBatchProcess = async () => {
+        if (!batchTexts.some(text => text.trim())) {
+            alert('Please enter some texts to process');
             return;
         }
 
-        const result = await humanizeText(inputText);
-        setOutputText(result);
+        const results = [];
+        setIsProcessing(true);
+        
+        for (let i = 0; i < batchTexts.length; i++) {
+            if (batchTexts[i].trim()) {
+                setProcessingStep(`Processing batch ${i + 1}/${batchTexts.length}...`);
+                const result = await humanizeText(batchTexts[i]);
+                results.push(result);
+            } else {
+                results.push('');
+            }
+        }
+        
+        setBatchResults(results);
+        setIsProcessing(false);
+        setProcessingStep('');
+    };
+
+    const handleHumanize = async () => {
+        if (batchMode) {
+            await handleBatchProcess();
+        } else {
+            if (!inputText.trim()) {
+                alert('Please enter some text to humanize');
+                return;
+            }
+            const result = await humanizeText(inputText);
+            setOutputText(result);
+        }
     };
 
     const handleCopy = () => {
-        navigator.clipboard.writeText(outputText).then(() => {
+        const textToCopy = batchMode ? batchResults.join('\n\n---\n\n') : outputText;
+        navigator.clipboard.writeText(textToCopy).then(() => {
             setCopySuccess(true);
             setTimeout(() => setCopySuccess(false), 2000);
         });
@@ -265,12 +417,20 @@ const handleBatchProcess = async () => {
     const handleClear = () => {
         setInputText('');
         setOutputText('');
+        setBatchTexts(['']);
+        setBatchResults([]);
         setProcessingStep('');
+        setTextAnalysis(null);
     };
 
     const handleSampleText = () => {
         const sampleText = `In conclusion, it is important to note that artificial intelligence has tremendously revolutionized the way we approach problem-solving in today's digital age. Furthermore, the cutting-edge algorithms leverage state-of-the-art machine learning techniques to seamlessly process vast amounts of data. Moreover, it should be noted that these robust systems can delve into complex patterns and provide exceptionally accurate results. However, one must consider that the implementation of such technologies requires careful consideration of various factors.`;
-        setInputText(sampleText);
+        
+        if (batchMode) {
+            setBatchTexts([sampleText, 'Add your second text here...', 'Add your third text here...']);
+        } else {
+            setInputText(sampleText);
+        }
     };
 
     return (
@@ -307,62 +467,171 @@ const handleBatchProcess = async () => {
                 </div>
 
                 <div className="p-8">
-                    <div className="grid lg:grid-cols-2 gap-8">
-                        {/* Input Section */}
-                        <div className="space-y-4">
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center space-x-2">
-                                    <FileText className="w-5 h-5 text-blue-600" />
-                                    <h3 className="text-lg font-semibold text-gray-700">AI Generated Text</h3>
-                                </div>
-                                <button
-                                    onClick={handleSampleText}
-                                    className="text-sm text-blue-600 hover:text-blue-800 underline"
-                                >
-                                    Try Sample Text
-                                </button>
-                            </div>
-                            <textarea
-                                value={inputText}
-                                onChange={(e) => setInputText(e.target.value)}
-                                placeholder="Paste your AI-generated text here..."
-                                className="w-full h-64 p-4 border-2 border-gray-200 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
-                            />
-                            <div className="flex justify-between items-center text-sm text-gray-500">
-                                <span>Characters: {inputText.length}</span>
-                                <span>Words: {inputText.split(/\s+/).filter(word => word.length > 0).length}</span>
-                            </div>
+                    {/* Mode and Settings */}
+                    <div className="mb-6 space-y-4">
+                        <div className="flex items-center justify-between">
+                            <h3 className="text-lg font-semibold text-gray-700">Settings</h3>
+                            <button
+                                onClick={() => setShowAdvanced(!showAdvanced)}
+                                className="flex items-center space-x-1 text-blue-600 hover:text-blue-800"
+                            >
+                                <Settings className="w-4 h-4" />
+                                <span className="text-sm">Advanced</span>
+                            </button>
                         </div>
-
-                        {/* Output Section */}
-                        <div className="space-y-4">
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center space-x-2">
-                                    <CheckCircle className="w-5 h-5 text-green-600" />
-                                    <h3 className="text-lg font-semibold text-gray-700">Humanized Text</h3>
-                                </div>
-                                {outputText && (
-                                    <button
-                                        onClick={handleCopy}
-                                        className="flex items-center space-x-2 px-3 py-1 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
-                                    >
-                                        <Copy className="w-4 h-4" />
-                                        <span className="text-sm">{copySuccess ? 'Copied!' : 'Copy'}</span>
-                                    </button>
-                                )}
+                        
+                        <div className="grid md:grid-cols-2 gap-4">
+                            {/* Humanization Mode */}
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Humanization Mode
+                                </label>
+                                <select
+                                    value={humanizationMode}
+                                    onChange={(e) => setHumanizationMode(e.target.value)}
+                                    className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                >
+                                    {Object.entries(humanizationModes).map(([key, mode]) => (
+                                        <option key={key} value={key}>
+                                            {mode.name} - {mode.description}
+                                        </option>
+                                    ))}
+                                </select>
                             </div>
-                            <textarea
-                                value={outputText}
-                                readOnly
-                                placeholder="Humanized text will appear here..."
-                                className="w-full h-64 p-4 border-2 border-gray-200 rounded-lg resize-none bg-gray-50"
-                            />
-                            <div className="flex justify-between items-center text-sm text-gray-500">
-                                <span>Characters: {outputText.length}</span>
-                                <span>Words: {outputText.split(/\s+/).filter(word => word.length > 0).length}</span>
+
+                            {/* Batch Mode Toggle */}
+                            <div className="flex items-center space-x-2">
+                                <label className="block text-sm font-medium text-gray-700">
+                                    Batch Processing
+                                </label>
+                                <input
+                                    type="checkbox"
+                                    checked={batchMode}
+                                    onChange={(e) => setBatchMode(e.target.checked)}
+                                    className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                />
                             </div>
                         </div>
                     </div>
+
+                    {/* Main Content Area */}
+                    {!batchMode ? (
+                        <div className="grid lg:grid-cols-2 gap-8">
+                            {/* Input Section */}
+                            <div className="space-y-4">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center space-x-2">
+                                        <FileText className="w-5 h-5 text-blue-600" />
+                                        <h3 className="text-lg font-semibold text-gray-700">AI Generated Text</h3>
+                                    </div>
+                                    <button
+                                        onClick={handleSampleText}
+                                        className="text-sm text-blue-600 hover:text-blue-800 underline"
+                                    >
+                                        Try Sample Text
+                                    </button>
+                                </div>
+                                <textarea
+                                    value={inputText}
+                                    onChange={(e) => setInputText(e.target.value)}
+                                    placeholder="Paste your AI-generated text here..."
+                                    className="w-full h-64 p-4 border-2 border-gray-200 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors"
+                                />
+                                <div className="flex justify-between items-center text-sm text-gray-500">
+                                    <span>Characters: {inputText.length}</span>
+                                    <span>Words: {inputText.split(/\s+/).filter(word => word.length > 0).length}</span>
+                                </div>
+                            </div>
+
+                            {/* Output Section */}
+                            <div className="space-y-4">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center space-x-2">
+                                        <CheckCircle className="w-5 h-5 text-green-600" />
+                                        <h3 className="text-lg font-semibold text-gray-700">Humanized Text</h3>
+                                    </div>
+                                    {outputText && (
+                                        <button
+                                            onClick={handleCopy}
+                                            className="flex items-center space-x-2 px-3 py-1 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+                                        >
+                                            <Copy className="w-4 h-4" />
+                                            <span className="text-sm">{copySuccess ? 'Copied!' : 'Copy'}</span>
+                                        </button>
+                                    )}
+                                </div>
+                                <textarea
+                                    value={outputText}
+                                    readOnly
+                                    placeholder="Humanized text will appear here..."
+                                    className="w-full h-64 p-4 border-2 border-gray-200 rounded-lg resize-none bg-gray-50"
+                                />
+                                <div className="flex justify-between items-center text-sm text-gray-500">
+                                    <span>Characters: {outputText.length}</span>
+                                    <span>Words: {outputText.split(/\s+/).filter(word => word.length > 0).length}</span>
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
+                        // Batch Mode Interface
+                        <div className="space-y-6">
+                            <div className="grid gap-4">
+                                {batchTexts.map((text, index) => (
+                                    <div key={index} className="space-y-2">
+                                        <label className="block text-sm font-medium text-gray-700">
+                                            Text {index + 1}
+                                        </label>
+                                        <textarea
+                                            value={text}
+                                            onChange={(e) => {
+                                                const newTexts = [...batchTexts];
+                                                newTexts[index] = e.target.value;
+                                                setBatchTexts(newTexts);
+                                            }}
+                                            placeholder={`Enter text ${index + 1} here...`}
+                                            className="w-full h-32 p-3 border-2 border-gray-200 rounded-lg resize-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                        />
+                                    </div>
+                                ))}
+                            </div>
+                            
+                            <div className="flex space-x-2">
+                                <button
+                                    onClick={() => setBatchTexts([...batchTexts, ''])}
+                                    className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg transition-colors"
+                                >
+                                    Add Text
+                                </button>
+                                {batchTexts.length > 1 && (
+                                    <button
+                                        onClick={() => setBatchTexts(batchTexts.slice(0, -1))}
+                                        className="px-4 py-2 bg-red-200 hover:bg-red-300 rounded-lg transition-colors"
+                                    >
+                                        Remove Last
+                                    </button>
+                                )}
+                            </div>
+
+                            {/* Batch Results */}
+                            {batchResults.length > 0 && (
+                                <div className="space-y-4">
+                                    <h3 className="text-lg font-semibold text-gray-700">Batch Results</h3>
+                                    {batchResults.map((result, index) => (
+                                        <div key={index} className="space-y-2">
+                                            <label className="block text-sm font-medium text-gray-700">
+                                                Result {index + 1}
+                                            </label>
+                                            <textarea
+                                                value={result}
+                                                readOnly
+                                                className="w-full h-32 p-3 border-2 border-gray-200 rounded-lg bg-gray-50"
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
 
                     {/* Processing Status */}
                     {isProcessing && (
@@ -372,7 +641,7 @@ const handleBatchProcess = async () => {
                                 <span className="text-blue-700 font-medium">{processingStep}</span>
                             </div>
                             <div className="mt-2 w-full bg-blue-200 rounded-full h-2">
-                                <div className="bg-blue-600 h-2 rounded-full animate-pulse" style={{ width: '70%' }}></div>
+                                <div className="bg-blue-600 h-2 rounded-full animate-pulse" style={{width: '70%'}}></div>
                             </div>
                         </div>
                     )}
@@ -381,11 +650,11 @@ const handleBatchProcess = async () => {
                     <div className="flex justify-center space-x-4 mt-8">
                         <button
                             onClick={handleHumanize}
-                            disabled={isProcessing || !inputText.trim()}
+                            disabled={isProcessing || (!inputText.trim() && !batchMode) || (batchMode && !batchTexts.some(text => text.trim()))}
                             className="flex items-center space-x-2 px-8 py-3 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-lg hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all transform hover:scale-105 shadow-lg"
                         >
                             <RefreshCw className={`w-5 h-5 ${isProcessing ? 'animate-spin' : ''}`} />
-                            <span>{isProcessing ? 'Humanizing...' : 'Humanize Text'}</span>
+                            <span>{isProcessing ? 'Processing...' : (batchMode ? 'Process Batch' : 'Humanize Text')}</span>
                         </button>
 
                         <button
@@ -396,6 +665,27 @@ const handleBatchProcess = async () => {
                         </button>
                     </div>
 
+                    {/* Advanced Analysis */}
+                    {showAdvanced && textAnalysis && (
+                        <div className="mt-8 p-6 bg-gray-50 rounded-lg">
+                            <h4 className="font-semibold text-gray-800 mb-4">Text Analysis</h4>
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                                <div className="text-center">
+                                    <div className="text-xl font-bold text-blue-600">{textAnalysis.perplexity.toFixed(2)}</div>
+                                    <div className="text-sm text-gray-600">Perplexity</div>
+                                </div>
+                                <div className="text-center">
+                                    <div className="text-xl font-bold text-green-600">{textAnalysis.burstiness.toFixed(2)}</div>
+                                    <div className="text-sm text-gray-600">Burstiness</div>
+                                </div>
+                                <div className="text-center">
+                                    <div className="text-xl font-bold text-orange-600 capitalize">{textAnalysis.context}</div>
+                                    <div className="text-sm text-gray-600">Context</div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {/* Tips Section */}
                     <div className="mt-8 grid md:grid-cols-2 gap-6">
                         <div className="p-6 bg-blue-50 rounded-lg">
@@ -404,6 +694,7 @@ const handleBatchProcess = async () => {
                                 How it works:
                             </h4>
                             <ul className="text-sm text-gray-600 space-y-2">
+                                <li>• Detects content context automatically</li>
                                 <li>• Replaces formal AI phrases with casual alternatives</li>
                                 <li>• Adds contractions to make text sound more natural</li>
                                 <li>• Varies sentence structure and length</li>
@@ -430,28 +721,54 @@ const handleBatchProcess = async () => {
                     </div>
 
                     {/* Stats Section */}
-                    {outputText && (
+                    {(outputText || batchResults.length > 0) && (
                         <div className="mt-8 grid grid-cols-2 md:grid-cols-4 gap-4">
                             <div className="bg-gray-50 p-4 rounded-lg text-center">
-                                <div className="text-2xl font-bold text-blue-600">{Math.round((outputText.length / inputText.length) * 100)}%</div>
+                                <div className="text-2xl font-bold text-blue-600">
+                                    {batchMode ? 
+                                        Math.round((batchResults.join('').length / batchTexts.join('').length) * 100) || 0 :
+                                        Math.round((outputText.length / inputText.length) * 100)
+                                    }%
+                                </div>
                                 <div className="text-sm text-gray-600">Length Retention</div>
                             </div>
                             <div className="bg-gray-50 p-4 rounded-lg text-center">
-                                <div className="text-2xl font-bold text-green-600">{(outputText.match(/'/g) || []).length}</div>
+                                <div className="text-2xl font-bold text-green-600">
+                                    {batchMode ?
+                                        (batchResults.join('').match(/'/g) || []).length :
+                                        (outputText.match(/'/g) || []).length
+                                    }
+                                </div>
                                 <div className="text-sm text-gray-600">Contractions Added</div>
                             </div>
                             <div className="bg-gray-50 p-4 rounded-lg text-center">
-                                <div className="text-2xl font-bold text-purple-600">{outputText.split(/[.!?]+/).length - 1}</div>
+                                <div className="text-2xl font-bold text-purple-600">
+                                    {batchMode ?
+                                        batchResults.join('').split(/[.!?]+/).length - 1 :
+                                        outputText.split(/[.!?]+/).length - 1
+                                    }
+                                </div>
                                 <div className="text-sm text-gray-600">Sentences</div>
                             </div>
                             <div className="bg-gray-50 p-4 rounded-lg text-center">
                                 <div className="text-2xl font-bold text-orange-600">
-                                    {Math.round(outputText.split(/[.!?]+/).reduce((acc, sentence) => acc + sentence.trim().split(/\s+/).length, 0) / (outputText.split(/[.!?]+/).length - 1)) || 0}
+                                    {(() => {
+                                        const text = batchMode ? batchResults.join('') : outputText;
+                                        const sentences = text.split(/[.!?]+/).filter(s => s.trim());
+                                        const totalWords = sentences.reduce((acc, sentence) => acc + sentence.trim().split(/\s+/).length, 0);
+                                        return Math.round(totalWords / sentences.length) || 0;
+                                    })()}
                                 </div>
                                 <div className="text-sm text-gray-600">Avg Words/Sentence</div>
                             </div>
                         </div>
                     )}
+
+                    {/* Footer */}
+                    <div className="mt-8 pt-6 border-t border-gray-200 text-center text-sm text-gray-500">
+                        <p>Built with React + Vite • Free and Open Source • No Data Stored</p>
+                        <p className="mt-1">Mode: {humanizationModes[humanizationMode].name} | Requests: {requestCount}/10 per minute</p>
+                    </div>
                 </div>
             </div>
         </div>
